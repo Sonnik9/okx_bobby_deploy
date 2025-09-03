@@ -92,7 +92,7 @@ class Synchronizer(PositionCleaner):
                 "contracts": 0.0,
                 "entry_price": None,
                 "trade_id": None,
-                "margin": None,
+                # "margin": None,
                 "notional_usd": None,
                 "leverage": None
             }
@@ -100,7 +100,7 @@ class Synchronizer(PositionCleaner):
         symbol = position.get("instId", "N/A").upper()
         pos_side = position.get("posSide", "N/A").upper()
         trade_id = position.get("tradeId", "N/A")
-        margin = abs(float(position.get("margin", 0.0)))
+        # margin = abs(float(position.get("margin", 0.0)))
         notional_usd = abs(float(position.get("notionalUsd", 0.0)))
         contracts = abs(float(position.get("pos", 0.0)))  # абсолютное значение контрактов
         entry_price = float(position.get("avgPx", 0.0))
@@ -113,7 +113,7 @@ class Synchronizer(PositionCleaner):
             "contracts": contracts,
             "entry_price": entry_price,
             "trade_id": trade_id,
-            "margin": margin,
+            # "margin": margin,
             "notional_usd": notional_usd,
             "leverage": leverage,
             "c_time": c_time
@@ -136,10 +136,10 @@ class Synchronizer(PositionCleaner):
         contracts = info.get("contracts")
         trade_id = info.get("trade_id")
         leverage = info.get("leverage")
-        margin_vol = info.get("margin")
         vol_usdt = info.get("notional_usd")
 
         pos_data = symbol_data[pos_side]
+        margin_vol = pos_data.get("margin_vol")
         vol_assets = contracts * ctVal
 
         # cur_time = int(time.time() * 1000)

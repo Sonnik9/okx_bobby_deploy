@@ -430,7 +430,9 @@ class Core:
 
         # Обновляем плечо
         leverage = fin_settings.get("leverage") or parsed_msg.get("leverage")
-        context_vars[symbol][pos_side]["leverage"] = leverage        
+        context_vars[symbol][pos_side]["leverage"] = leverage     
+
+        context_vars[symbol][pos_side]["margin_vol"] = fin_settings.get("margin_size")
         
         # Форматирование цен
         cur_price = self.context.prices.get(symbol)
@@ -500,6 +502,8 @@ class Core:
                 err_msg = f"[ERROR] Failed to start user context for chat_id {chat_id}: {e}"
                 self.info_handler.debug_error_notes(err_msg, is_print=True)
                 continue
+
+        self.connector.start_ping_loop()
 
         # --- Получаем инструменты с биржи ---
         try:       
