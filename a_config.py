@@ -45,9 +45,9 @@ INIT_USER_CONFIG = {
             "api_passphrase": "hereiame33!ABc"
         },
         "fin_settings": {
-            "margin_size": None,
+            "margin_size": 2,
             "margin_mode": 2, # CROSSED            
-            "leverage": None,
+            "leverage": 10,
             "market_order": None, # 1 -- лимитками, 2 -- по маркету.
             "order_timeout": 60,           
         }

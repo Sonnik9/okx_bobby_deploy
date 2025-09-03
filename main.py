@@ -235,12 +235,12 @@ class Core:
         tp_px = to_human_digit(round(float(take_profit), price_precision))
         sl_px = to_human_digit(round(float(stop_loss), price_precision))
 
-        # print(
-        #     f"[DEBUG price rounding] precision={price_precision} | "
-        #     f"entry: raw={entry_price} -> rounded={entry_px} | "
-        #     f"tp: raw={take_profit} -> rounded={tp_px} | "
-        #     f"sl: raw={stop_loss} -> rounded={sl_px}"
-        # )
+        print(
+            f"[DEBUG price rounding] precision={price_precision} | "
+            f"entry: raw={entry_price} -> rounded={entry_px} | "
+            f"tp: raw={take_profit} -> rounded={tp_px} | "
+            f"sl: raw={stop_loss} -> rounded={sl_px}"
+        )
 
         return entry_px, tp_px, sl_px, contracts
 
@@ -320,6 +320,7 @@ class Core:
         if not ord_id or ord_info.get("sCode") != "0":
             order_failed_body = {
                 "symbol": symbol,
+                "pos_side": pos_side,
                 "reason": ord_info.get("sMsg"),
                 "cur_time": int(ord_ts) if ord_ts else int(time.time() * 1000),
             }
