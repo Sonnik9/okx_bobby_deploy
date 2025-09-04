@@ -47,15 +47,17 @@ class PositionCleaner():
             pos_side: str
         ):
         if bool(pos_data.get("in_position", False)):
-            await self.pnl_report(
-                symbol=symbol,
-                pos_side=pos_side,
-                pos_data=pos_data,
-                get_current_price=self.okx_client.get_current_price,
-                format_message=self.format_message,
-                chat_id=self.chat_id
-            )                    
-            self.reset_position_vars(symbol, pos_side)
+            try:
+                await self.pnl_report(
+                    symbol=symbol,
+                    pos_side=pos_side,
+                    pos_data=pos_data,
+                    get_current_price=self.okx_client.get_current_price,
+                    format_message=self.format_message,
+                    chat_id=self.chat_id
+                )   
+            finally:                
+                self.reset_position_vars(symbol, pos_side)
             
 
 class Synchronizer(PositionCleaner):

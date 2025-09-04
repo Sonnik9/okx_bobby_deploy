@@ -19,6 +19,8 @@ from c_utils import Utils, fix_price_scale, to_human_digit
 import traceback
 import os
 
+SIGNAL_REPEAT_TIMEOUT = 5
+
 def force_exit(*args):
     print("💥 Принудительное завершение процесса")
     os._exit(1)  # немедленно убивает процесс
@@ -121,8 +123,7 @@ class Core:
         symbol: str,
         pos_side: str,
         pos_data: dict,
-        last_timestamp: int,
-        msg_key: str
+        last_timestamp: int
     ):
         """
         Ожидает открытия позиции до ORDER_TIMEOUT.
@@ -155,9 +156,6 @@ class Core:
                 )
 
         finally:            
-            # Очищаем кеш таймингов телеграм
-            self.context.tg_timing_cache.discard(msg_key)
-            # Отмена ордера, если существует order_id
             await self.cancel_existing_order(
                 session=session,
                 symbol=symbol,
@@ -360,7 +358,6 @@ class Core:
         parsed_msg: dict,
         context_vars: dict,
         last_timestamp: int,
-        msg_key: str,
     ):
         symbol = parsed_msg["symbol"]
         pos_side = parsed_msg["pos_side"]
@@ -399,8 +396,7 @@ class Core:
                     symbol=symbol,
                     pos_side=pos_side,
                     pos_data=pos_data,
-                    last_timestamp=last_timestamp,
-                    msg_key=msg_key
+                    last_timestamp=last_timestamp
                 )
             )
 
@@ -411,8 +407,7 @@ class Core:
         context_vars: dict,        
         symbol: str,
         pos_side: str,
-        last_timestamp: str,
-        msg_key: str
+        last_timestamp: str
     ) -> None:
         # Проверка и установка дефолтов
         if not self.pos_setup.set_pos_defaults(symbol, pos_side, self.instruments_data):
@@ -431,61 +426,43 @@ class Core:
             )
             return
 
-        # Защита 2: уже идёт открытие (pending_open)
-        if pos_data.get("pending_open", False):
-            self.info_handler.debug_info_notes(
-                f"[handle_signal] Skip: pending_open {symbol} {pos_side}"
-            )
-            return
+        # --- Достаём фин настройки ---
+        fin_settings = self.context.users_configs[chat_id]["config"]["fin_settings"]
 
-        # Ставим флаг pending_open
-        pos_data["pending_open"] = True
+        # Обновляем плечо
+        max_leverage = context_vars.get(symbol, {}).get("spec", {}).get("max_leverage", 20)
+        leverage = min(
+            fin_settings.get("leverage") or parsed_msg.get("leverage"),
+            max_leverage
+        )
+        pos_data["leverage"] = leverage
+        pos_data["margin_vol"] = fin_settings.get("margin_size")
 
-        try:
-            # --- Достаём фин настройки ---
-            fin_settings = self.context.users_configs[chat_id]["config"]["fin_settings"]
+        # Форматируем цены
+        cur_price = self.context.prices.get(symbol)
+        for key in ("entry_price", "take_profit", "stop_loss"):
+            parsed_msg[key] = fix_price_scale(parsed_msg.get(key), cur_price)
 
-            # Обновляем плечо
-            max_leverage = context_vars.get(symbol, {}).get("spec", {}).get("max_leverage", 20)
-            leverage = min(
-                fin_settings.get("leverage") or parsed_msg.get("leverage"),
-                max_leverage
-            )
-            pos_data["leverage"] = leverage
-            pos_data["margin_vol"] = fin_settings.get("margin_size")
+        # Уведомление
+        signal_body = {
+            "symbol": symbol,
+            "pos_side": pos_side,
+            "cur_time": last_timestamp,
+            "leverage": leverage,
+            "entry_price": parsed_msg["entry_price"],
+            "tp": parsed_msg["take_profit"],
+            "sl": parsed_msg["stop_loss"],
+        }
+        self.notifier.format_message(chat_id, "signal", signal_body, is_print=True)
 
-            # Форматируем цены
-            cur_price = self.context.prices.get(symbol)
-            for key in ("entry_price", "take_profit", "stop_loss"):
-                parsed_msg[key] = fix_price_scale(parsed_msg.get(key), cur_price)
-
-            # Уведомление
-            signal_body = {
-                "symbol": symbol,
-                "pos_side": pos_side,
-                "cur_time": last_timestamp,
-                "leverage": leverage,
-                "entry_price": parsed_msg["entry_price"],
-                "tp": parsed_msg["take_profit"],
-                "sl": parsed_msg["stop_loss"],
-            }
-            self.notifier.format_message(chat_id, "signal", signal_body, is_print=True)
-
-            # Запуск ордера
-            await self.complete_signal_task(
-                chat_id=chat_id,
-                fin_settings=fin_settings,
-                parsed_msg=parsed_msg,
-                context_vars=context_vars,
-                last_timestamp=last_timestamp,
-                msg_key=msg_key
-            )
-
-        finally:
-            # Снимаем pending_open, если update_positions ещё не успел
-            if not pos_data.get("in_position"):
-                pos_data["pending_open"] = False
-
+        # Запуск ордера
+        await self.complete_signal_task(
+            chat_id=chat_id,
+            fin_settings=fin_settings,
+            parsed_msg=parsed_msg,
+            context_vars=context_vars,
+            last_timestamp=last_timestamp
+        )
 
     async def _run_iteration(self) -> None:
         """Одна итерация торговли (от старта до стопа)."""
@@ -548,61 +525,57 @@ class Core:
             try:
                 signal_tasks_val = self.context.message_cache[-SIGNAL_PROCESSING_LIMIT:] if self.context.message_cache else None
                 if not signal_tasks_val:
-                    # print("[DEBUG] No signal tasks available")
                     await asyncio.sleep(MAIN_CYCLE_FREQUENCY)
                     continue
 
-                for signal_item in signal_tasks_val:
-                    if not signal_item:
-                        continue
-
-                    message, last_timestamp = signal_item
-                    if not (message and last_timestamp):
-                        print("[DEBUG] Invalid signal item, skipping")
-                        continue
-
-                    hash_message = hash(message)
-                    msg_key = f"{last_timestamp}_{hash_message}"
-                    if msg_key in self.context.tg_timing_cache:
-                        continue
-                    self.context.tg_timing_cache.add(msg_key)
-
-                    parsed_msg, all_present = self.tg_watcher.parse_tg_message(message)
+                # --- Фильтруем сигналы по тексту и времени ---
+                filtered_signals: List[Tuple[str, int, str, dict]] = []  # msg, ts, chat_id, parsed_msg
+                current_time = time.time()
+                for msg, ts in signal_tasks_val:
+                    parsed_msg, all_present = self.tg_watcher.parse_tg_message(msg)
                     if not all_present:
                         print(f"[DEBUG] Parse error: {parsed_msg}")
                         continue
 
                     symbol = parsed_msg.get("symbol")
                     pos_side = parsed_msg.get("pos_side")
-                    debug_label = f"{symbol}_{pos_side}"
+                    # debug_label = f"{symbol}_{pos_side}"
 
                     if symbol in BLACK_SYMBOLS:
                         continue
+                    diff_sec = current_time - (ts / 1000)
 
-                    # === Проверка на таймаут ===
-                    diff_sec = time.time() - (last_timestamp / 1000)
-                    # print(f"[DEBUG]{debug_label} diff sec: {diff_sec:.2f}")
-                    
+
                     for num, (chat_id, user_cfg) in enumerate(self.context.users_configs.items(), start=1):
                         if num > 1:
                             continue
-                        if diff_sec < user_cfg.get("fin_settings", {}).get("order_timeout", 60):
-                            # Создаём lock для каждой позиции, если ещё нет
-                            lock_key = f"{symbol}_{pos_side}"
-                            if lock_key not in self.context.symbol_locks:
-                                self.context.symbol_locks[lock_key] = asyncio.Lock()
 
-                            # Асинхронно блокируем обработку сигналов на эту позицию
-                            async with self.context.symbol_locks[lock_key]:                                    
-                                asyncio.create_task(self.handle_signal(
-                                    chat_id=chat_id,
-                                    parsed_msg=parsed_msg,
-                                    context_vars=context_vars,                            
-                                    symbol=symbol,
-                                    pos_side=pos_side,
-                                    last_timestamp=last_timestamp,
-                                    msg_key=msg_key
-                                ))
+                        if diff_sec >= user_cfg.get("fin_settings", {}).get("order_timeout", 60):
+                            continue
+
+                        # --- Генерируем ключ для повторной отправки ---
+                        signal_key = f"{symbol}_{pos_side}_{chat_id}"
+                        last_sent = self.context.tg_signal_hash_cache.get(signal_key, 0)
+                        if current_time - last_sent < SIGNAL_REPEAT_TIMEOUT:
+                            continue
+
+                        self.context.tg_signal_hash_cache[signal_key] = current_time
+                        filtered_signals.append((ts, chat_id, parsed_msg))
+
+                # --- Обработка сигналов ---
+                for last_timestamp, chat_id, parsed_msg in filtered_signals:
+                    symbol = parsed_msg.get("symbol")
+                    pos_side = parsed_msg.get("pos_side")
+
+                    # --- Создаём асинхронную задачу с авто-очисткой pending_open ---
+                    asyncio.create_task(self.handle_signal(
+                        chat_id=chat_id,
+                        parsed_msg=parsed_msg,
+                        context_vars=context_vars,        
+                        symbol=parsed_msg.get("symbol"),
+                        pos_side=parsed_msg.get("pos_side"),
+                        last_timestamp=last_timestamp
+                    ))
 
             except Exception as e:
                 err_msg = f"[ERROR] main loop: {e}\n" + traceback.format_exc()
@@ -619,7 +592,6 @@ class Core:
                     self.info_handler.debug_error_notes(err_msg, is_print=True)
 
                 await asyncio.sleep(MAIN_CYCLE_FREQUENCY)
-
 
     async def run_forever(self, debug: bool = True):
         """Основной перезапускаемый цикл Core."""

@@ -7,7 +7,7 @@ class BotContext:
         """ Инициализируем глобальные структуры"""
         # //
         self.message_cache: list = []  # основной кеш сообщений
-        self.tg_timing_cache: set = set()
+        self.tg_signal_hash_cache: dict = {}
         self.stop_bot = False
         self.start_bot_iteration = False
         self.stop_bot_iteration = False
