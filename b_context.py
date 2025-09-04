@@ -19,5 +19,4 @@ class BotContext:
         self.position_vars: dict = {}
         self.report_list: list = []
         self.session: Optional[aiohttp.ClientSession] = None
-        self.position_updated_event = asyncio.Event()
         self.symbol_locks: dict = {}

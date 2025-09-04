@@ -72,6 +72,7 @@ class Synchronizer(PositionCleaner):
         info_handler.wrap_foreign_methods(self)
   
         self.positions_update_frequency = positions_update_frequency
+        self._first_update_done = False
 
     @staticmethod
     def unpack_position_info(position: dict) -> dict:
@@ -239,6 +240,11 @@ class Synchronizer(PositionCleaner):
                 f"[Unexpected Error]: {e}"
             )
 
+        finally:
+            if not self._first_update_done:
+                self._first_update_done = True
+                self.info_handler.debug_info_notes("[update_positions] First update done, flag set")
+
     async def refresh_positions_state(
         self
     ) -> None:
@@ -279,5 +285,4 @@ class Synchronizer(PositionCleaner):
     async def refresh_positions_task(self) -> None:
         while not self.context.stop_bot and not self.context.stop_bot_iteration:
             await self.refresh_positions_state()
-            self.context.position_updated_event.set()  # ← сигнал, что позиции обновились
             await asyncio.sleep(self.positions_update_frequency)

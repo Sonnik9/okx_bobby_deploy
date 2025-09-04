@@ -415,69 +415,64 @@ class Core:
         msg_key: str
     ) -> None:
 
-        # Создаём lock для каждой позиции, если ещё нет
-        lock_key = f"{symbol}_{pos_side}"
-        if lock_key not in self.context.symbol_locks:
-            self.context.symbol_locks[lock_key] = asyncio.Lock()
 
-        # Асинхронно блокируем обработку сигналов на эту позицию
-        async with self.context.symbol_locks[lock_key]:
+        # Проверка и установка дефолтов позиции
+        if not self.pos_setup.set_pos_defaults(symbol, pos_side, self.instruments_data):
+            return
 
-            # Проверка и установка дефолтов позиции
-            if not self.pos_setup.set_pos_defaults(symbol, pos_side, self.instruments_data):
-                return
+        # Ждём, пока первый апдейт позиций не произойдёт
+        while not self.sync._first_update_done:
+            # self.info_handler.debug_info_notes(f"[handle_signal] Waiting for first positions update for {symbol}")
+            await asyncio.sleep(0.1)
 
-            await self.context.position_updated_event.wait()
-            self.context.position_updated_event.clear()
+        in_position = context_vars.get(symbol, {}).get(pos_side, {}).get("in_position", False)
+        if in_position:
+            return
 
-            in_position = context_vars.get(symbol, {}).get(pos_side, {}).get("in_position", False)
-            if in_position:
-                return
+        # Получаем финансовые настройки пользователя
+        fin_settings = self.context.users_configs[chat_id]["config"]["fin_settings"]
 
-            # Получаем финансовые настройки пользователя
-            fin_settings = self.context.users_configs[chat_id]["config"]["fin_settings"]
+        # Обновляем плечо позиции
+        max_leverage = context_vars.get(symbol, {}).get("spec", {}).get("max_leverage", 20)
+        leverage = min(
+            fin_settings.get("leverage") or parsed_msg.get("leverage"),
+            max_leverage
+        )
+        context_vars[symbol][pos_side]["leverage"] = leverage
+        context_vars[symbol][pos_side]["margin_vol"] = fin_settings.get("margin_size")
 
-            # Обновляем плечо позиции
-            max_leverage = context_vars.get(symbol, {}).get("spec", {}).get("max_leverage", 1)
-            leverage = min(
-                fin_settings.get("leverage") or parsed_msg.get("leverage"),
-                max_leverage
-            )
-            context_vars[symbol][pos_side]["leverage"] = leverage
-            context_vars[symbol][pos_side]["margin_vol"] = fin_settings.get("margin_size")
+        # Форматируем цены по текущему рынку
+        cur_price = self.context.prices.get(symbol)
+        for key in ("entry_price", "take_profit", "stop_loss"):
+            parsed_msg[key] = fix_price_scale(parsed_msg.get(key), cur_price)
 
-            # Форматируем цены по текущему рынку
-            cur_price = self.context.prices.get(symbol)
-            for key in ("entry_price", "take_profit", "stop_loss"):
-                parsed_msg[key] = fix_price_scale(parsed_msg.get(key), cur_price)
+        # Формируем тело сигнала для уведомления
+        signal_body = {
+            "symbol": symbol,
+            "pos_side": pos_side,
+            "cur_time": last_timestamp,
+            "leverage": leverage,
+            "entry_price": parsed_msg["entry_price"],
+            "tp": parsed_msg["take_profit"],
+            "sl": parsed_msg["stop_loss"],
+        }
 
-            # Формируем тело сигнала для уведомления
-            signal_body = {
-                "symbol": symbol,
-                "pos_side": pos_side,
-                "cur_time": last_timestamp,
-                "leverage": leverage,
-                "entry_price": parsed_msg["entry_price"],
-                "tp": parsed_msg["take_profit"],
-                "sl": parsed_msg["stop_loss"],
-            }
+        self.notifier.format_message(
+            chat_id=chat_id,
+            marker="signal",
+            body=signal_body,
+            is_print=True
+        )
 
-            self.notifier.format_message(
-                chat_id=chat_id,
-                marker="signal",
-                body=signal_body,
-                is_print=True
-            )
-
-            # Завершаем обработку сигнала
-            await self.complete_signal_task(
-                chat_id=chat_id,
-                fin_settings=fin_settings,
-                parsed_msg=parsed_msg,
-                context_vars=context_vars,
-                last_timestamp=last_timestamp,
-                msg_key=msg_key
-            )
+        # Завершаем обработку сигнала
+        await self.complete_signal_task(
+            chat_id=chat_id,
+            fin_settings=fin_settings,
+            parsed_msg=parsed_msg,
+            context_vars=context_vars,
+            last_timestamp=last_timestamp,
+            msg_key=msg_key
+        )
 
     async def _run_iteration(self) -> None:
         """Одна итерация торговли (от старта до стопа)."""
@@ -579,16 +574,22 @@ class Core:
                         if num > 1:
                             continue
                         if diff_sec < user_cfg.get("fin_settings", {}).get("order_timeout", 60):
-                                    
-                            asyncio.create_task(self.handle_signal(
-                                chat_id=chat_id,
-                                parsed_msg=parsed_msg,
-                                context_vars=context_vars,                            
-                                symbol=symbol,
-                                pos_side=pos_side,
-                                last_timestamp=last_timestamp,
-                                msg_key=msg_key
-                            ))
+                            # Создаём lock для каждой позиции, если ещё нет
+                            lock_key = f"{symbol}_{pos_side}"
+                            if lock_key not in self.context.symbol_locks:
+                                self.context.symbol_locks[lock_key] = asyncio.Lock()
+
+                            # Асинхронно блокируем обработку сигналов на эту позицию
+                            async with self.context.symbol_locks[lock_key]:                                    
+                                asyncio.create_task(self.handle_signal(
+                                    chat_id=chat_id,
+                                    parsed_msg=parsed_msg,
+                                    context_vars=context_vars,                            
+                                    symbol=symbol,
+                                    pos_side=pos_side,
+                                    last_timestamp=last_timestamp,
+                                    msg_key=msg_key
+                                ))
 
             except Exception as e:
                 err_msg = f"[ERROR] main loop: {e}\n" + traceback.format_exc()
