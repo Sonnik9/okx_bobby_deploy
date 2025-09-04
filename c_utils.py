@@ -102,11 +102,12 @@ class Utils:
         ):    
         info_handler.wrap_foreign_methods(self)
         self.info_handler = info_handler   
-         
+
     @staticmethod
     def parse_precision(data: List[Dict[str, Any]], symbol: str) -> Optional[Dict[str, Any]]:
         for info in data:
             if info.get("instId") == symbol:
+                # print(f"spec: {info}")
                 def count_precision(value_str: str) -> int:
                     return len(value_str.split(".")[1]) if "." in value_str else 0
 
@@ -114,11 +115,19 @@ class Utils:
                 lot_sz_str = str(info.get("lotSz", "1"))
                 tick_sz_str = str(info.get("tickSz", "1"))
 
+                # пробуем взять плечо
+                max_leverage = (
+                    info.get("lever") or
+                    info.get("maxLeverage") or
+                    info.get("leverUp")  # иногда в разных режимах так называется
+                )
+
                 return {
                     "ctVal": float(ctVal_str),
                     "lotSz": float(lot_sz_str),
                     "contract_precision": count_precision(lot_sz_str),
-                    "price_precision": count_precision(tick_sz_str)
+                    "price_precision": count_precision(tick_sz_str),
+                    "max_leverage": int(max_leverage) if max_leverage else None
                 }
         return None
 

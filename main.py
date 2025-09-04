@@ -414,59 +414,70 @@ class Core:
         last_timestamp: str,
         msg_key: str
     ) -> None:
-        
-        if not self.pos_setup.set_pos_defaults(symbol, pos_side, self.instruments_data):
-            return
 
-        await self.context.position_updated_event.wait()
-        self.context.position_updated_event.clear()
+        # Создаём lock для каждой позиции, если ещё нет
+        lock_key = f"{symbol}_{pos_side}"
+        if lock_key not in self.context.symbol_locks:
+            self.context.symbol_locks[lock_key] = asyncio.Lock()
 
-        in_position = context_vars.get(symbol, {}).get(pos_side, {}).get("in_position", False)
-        if in_position:
-            # print("in_position")
-            return
-        
-        fin_settings = self.context.users_configs[chat_id]["config"]["fin_settings"]
+        # Асинхронно блокируем обработку сигналов на эту позицию
+        async with self.context.symbol_locks[lock_key]:
 
-        # Обновляем плечо
-        leverage = fin_settings.get("leverage") or parsed_msg.get("leverage")
-        context_vars[symbol][pos_side]["leverage"] = leverage     
+            # Проверка и установка дефолтов позиции
+            if not self.pos_setup.set_pos_defaults(symbol, pos_side, self.instruments_data):
+                return
 
-        context_vars[symbol][pos_side]["margin_vol"] = fin_settings.get("margin_size")
-        
-        # Форматирование цен
-        cur_price = self.context.prices.get(symbol)
-        # print(cur_price)
+            await self.context.position_updated_event.wait()
+            self.context.position_updated_event.clear()
 
-        for key in ("entry_price", "take_profit", "stop_loss"):
-            parsed_msg[key] = fix_price_scale(parsed_msg.get(key), cur_price)
+            in_position = context_vars.get(symbol, {}).get(pos_side, {}).get("in_position", False)
+            if in_position:
+                return
 
-        signal_body = {
-            "symbol": symbol,
-            "pos_side": pos_side,
-            "cur_time": last_timestamp,
-            "leverage": leverage,
-            "entry_price": parsed_msg["entry_price"],
-            "tp": parsed_msg["take_profit"],
-            "sl": parsed_msg["stop_loss"],
-        }
+            # Получаем финансовые настройки пользователя
+            fin_settings = self.context.users_configs[chat_id]["config"]["fin_settings"]
 
-        self.notifier.format_message(
-            chat_id=chat_id,
-            marker="signal",
-            body=signal_body,
-            is_print=True
-        )
+            # Обновляем плечо позиции
+            max_leverage = context_vars.get(symbol, {}).get("spec", {}).get("max_leverage", 1)
+            leverage = min(
+                fin_settings.get("leverage") or parsed_msg.get("leverage"),
+                max_leverage
+            )
+            context_vars[symbol][pos_side]["leverage"] = leverage
+            context_vars[symbol][pos_side]["margin_vol"] = fin_settings.get("margin_size")
 
-        # Завершение обработки
-        await self.complete_signal_task(
-            chat_id=chat_id,
-            fin_settings=fin_settings,
-            parsed_msg=parsed_msg,
-            context_vars=context_vars,
-            last_timestamp=last_timestamp,
-            msg_key=msg_key
-        )
+            # Форматируем цены по текущему рынку
+            cur_price = self.context.prices.get(symbol)
+            for key in ("entry_price", "take_profit", "stop_loss"):
+                parsed_msg[key] = fix_price_scale(parsed_msg.get(key), cur_price)
+
+            # Формируем тело сигнала для уведомления
+            signal_body = {
+                "symbol": symbol,
+                "pos_side": pos_side,
+                "cur_time": last_timestamp,
+                "leverage": leverage,
+                "entry_price": parsed_msg["entry_price"],
+                "tp": parsed_msg["take_profit"],
+                "sl": parsed_msg["stop_loss"],
+            }
+
+            self.notifier.format_message(
+                chat_id=chat_id,
+                marker="signal",
+                body=signal_body,
+                is_print=True
+            )
+
+            # Завершаем обработку сигнала
+            await self.complete_signal_task(
+                chat_id=chat_id,
+                fin_settings=fin_settings,
+                parsed_msg=parsed_msg,
+                context_vars=context_vars,
+                last_timestamp=last_timestamp,
+                msg_key=msg_key
+            )
 
     async def _run_iteration(self) -> None:
         """Одна итерация торговли (от старта до стопа)."""
@@ -542,7 +553,8 @@ class Core:
                         print("[DEBUG] Invalid signal item, skipping")
                         continue
 
-                    msg_key = f"{last_timestamp}_{hash(message)}"
+                    hash_message = hash(message)
+                    msg_key = f"{last_timestamp}_{hash_message}"
                     if msg_key in self.context.tg_timing_cache:
                         continue
                     self.context.tg_timing_cache.add(msg_key)
