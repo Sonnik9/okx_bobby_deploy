@@ -94,6 +94,28 @@ def to_human_digit(value):
     else:
         return format(dec_value, 'f').rstrip('0').rstrip('.')  
 
+def safe_float(value: Any, default: float = 0.0) -> float:
+    """Преобразует значение в float, если не удалось — возвращает default"""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+def safe_int(value: Any, default: int = 0) -> int:
+    """Преобразует значение в int, если не удалось — возвращает default"""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+def safe_round(value: Any, ndigits: int = 2, default: float = 0.0) -> float:
+    """Безопасный round для None или нечисловых значений"""
+    try:
+        return round(float(value), ndigits)
+    except (TypeError, ValueError):
+        return default
+
+
 
 class Utils:
     def __init__(

@@ -18,7 +18,8 @@ class PositionVarsSetup:
             "margin_vol": None,
             "vol_usdt": None,   
             "vol_assets": None,
-            "entry_price": None,      
+            "entry_price": None,  
+            "pending_open": False,    
             "in_position": False, 
             "order_id": None,
             "c_time": None

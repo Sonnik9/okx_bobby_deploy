@@ -1,8 +1,10 @@
 import aiohttp
 import asyncio
+import time
 from typing import Callable, Dict, List, Set
 from b_context import BotContext
 from c_log import ErrorHandler
+from c_utils import safe_float, safe_int, safe_round
 from API.OKX.okx import OkxFuturesClient
 
 
@@ -78,12 +80,7 @@ class Synchronizer(PositionCleaner):
     def unpack_position_info(position: dict) -> dict:
         """
         Распаковывает позицию OKX SWAP/FUTURES из формата API OKX.
-        Возвращает словарь с:
-        - symbol (str): 'instId'
-        - pos_side (str): 'LONG' или 'SHORT' (в зависимости от posSide)
-        - contracts (float): количество контрактов (pos), абсолютное значение
-        - entry_price (float): средняя цена позиции (avgPx)
-        Если данных нет, возвращает значения по умолчанию.
+        Возвращает словарь с безопасными значениями.
         """
         if not isinstance(position, dict):
             return {
@@ -93,32 +90,24 @@ class Synchronizer(PositionCleaner):
                 "contracts": 0.0,
                 "entry_price": None,
                 "trade_id": None,
-                # "margin": None,
                 "notional_usd": None,
                 "leverage": None
             }
 
-        symbol = position.get("instId", "N/A").upper()
-        pos_side = position.get("posSide", "N/A").upper()
-        trade_id = position.get("tradeId", "N/A")
-        # margin = abs(float(position.get("margin", 0.0)))
-        notional_usd = abs(float(position.get("notionalUsd", 0.0)))
-        contracts = abs(float(position.get("pos", 0.0)))  # абсолютное значение контрактов
-        entry_price = float(position.get("avgPx", 0.0))
-        leverage = abs(int(position.get("lever", 1)))
-        c_time = int(position.get("cTime", None))
+        symbol = str(position.get("instId", "N/A")).upper()
+        pos_side = str(position.get("posSide", "N/A")).upper()
+        trade_id = str(position.get("tradeId", "N/A"))
 
         return {
             "symbol": symbol,
             "pos_side": pos_side,
-            "contracts": contracts,
-            "entry_price": entry_price,
+            "contracts": abs(safe_float(position.get("pos"), 0.0)),
+            "entry_price": safe_float(position.get("avgPx"), 0.0),
             "trade_id": trade_id,
-            # "margin": margin,
-            "notional_usd": notional_usd,
-            "leverage": leverage,
-            "c_time": c_time
-        }    
+            "notional_usd": abs(safe_float(position.get("notionalUsd"), 0.0)),
+            "leverage": abs(safe_int(position.get("lever"), 1)),
+            "c_time": safe_int(position.get("cTime"), None),
+        }
 
     def update_active_position(
             self,
@@ -127,33 +116,27 @@ class Synchronizer(PositionCleaner):
             pos_side: str,
             info: dict,
         ):
-        ctVal_str = symbol_data["spec"]["ctVal"]
-        try:
-            ctVal = float(ctVal_str)
-        except (ValueError, TypeError):
-            ctVal = 1.0  # запасной вариант
+        ctVal = safe_float(symbol_data.get("spec", {}).get("ctVal"), 1.0)
 
-        entry_price = info.get("entry_price")
-        contracts = info.get("contracts")
+        entry_price = safe_float(info.get("entry_price"))
+        contracts = safe_float(info.get("contracts"))
         trade_id = info.get("trade_id")
-        leverage = info.get("leverage")
-        vol_usdt = info.get("notional_usd")
+        leverage = safe_int(info.get("leverage"), 1)
+        vol_usdt = safe_float(info.get("notional_usd"))
+        cur_time = info.get("c_time") or int(time.time() * 1000)
 
-        pos_data = symbol_data[pos_side]
-        margin_vol = pos_data.get("margin_vol")
+        pos_data = symbol_data.get(pos_side, {})
+        margin_vol = safe_float(pos_data.get("margin_vol"))
         vol_assets = contracts * ctVal
 
-        # cur_time = int(time.time() * 1000)
-        cur_time = info.get("c_time")
-
-        if not pos_data.get("in_position"):      
+        if not pos_data.get("in_position"):
             body = {
                 "symbol": symbol,
                 "pos_side": pos_side,
                 "cur_time": cur_time,
-                "margin_vol": round(margin_vol, 2),
-                "vol_usdt": round(vol_usdt, 2),
-                "vol_assets": vol_assets,
+                "margin_vol": safe_round(margin_vol),
+                "vol_usdt": safe_round(vol_usdt),
+                "vol_assets": safe_round(vol_assets, 8),  # для контрактов точность выше
             }
 
             self.format_message(
@@ -173,6 +156,7 @@ class Synchronizer(PositionCleaner):
             "vol_assets": vol_assets,
             "leverage": leverage
         })
+
 
     async def update_positions(
         self,  
@@ -231,6 +215,10 @@ class Synchronizer(PositionCleaner):
                         pos_side=pos_side
                     )
 
+            if not self._first_update_done:
+                self._first_update_done = True
+                self.info_handler.debug_info_notes("[update_positions] First update done, flag set")
+
         except KeyError as e:
             self.info_handler.debug_error_notes(
                 f"[KeyError]: {e}"
@@ -239,11 +227,6 @@ class Synchronizer(PositionCleaner):
             self.info_handler.debug_error_notes(
                 f"[Unexpected Error]: {e}"
             )
-
-        finally:
-            if not self._first_update_done:
-                self._first_update_done = True
-                self.info_handler.debug_info_notes("[update_positions] First update done, flag set")
 
     async def refresh_positions_state(
         self
