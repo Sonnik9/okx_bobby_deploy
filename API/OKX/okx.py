@@ -416,6 +416,98 @@ class OkxFuturesClient:
         if r is None:
             return  
         return r.get("data", [])    
+    
+    # /////
+    async def get_historical_orders_report(
+        self,
+        symbol: Optional[str] = None,
+        start_time: Optional[int] = None,
+        end_time: Optional[int] = None,
+        session: Optional[aiohttp.ClientSession] = None,
+    ) -> Dict[str, Any]:
+        """
+        Получить историю позиций (positions-history) из OKX.
+        """
+        params: Dict[str, Any] = {}
+        if symbol:
+            params["instId"] = symbol  # OKX формат: BTC-USDT-SWAP
+        if start_time:
+            params["after"] = str(start_time)
+        if end_time:
+            params["before"] = str(end_time)
+
+        return await self._request(
+            session=session,
+            method="GET",
+            path="/api/v5/account/positions-history",
+            params=params,
+            private=True
+        )
+    async def get_realized_pnl(
+        self,
+        symbol: str,
+        start_time: Optional[int],
+        end_time: Optional[int],
+        direction: Optional[int] = None  # 1=LONG, 2=SHORT
+    ) -> dict:
+        """
+        Считает реализованный PnL за период по символу (OKX).
+        Возвращает словарь:
+            {"pnl_usdt": float, "pnl_pct": float}
+        """
+        try:
+            rows = await self.get_futures_statement(symbol=symbol)
+            # print(f"rows: {rows}")
+            if not rows:
+                return {"pnl_usdt": 0.0, "pnl_pct": 0.0}
+        except Exception as e:
+            self.info_handler.debug_error_notes(
+                f"[get_realized_pnl][OKX] error fetching data: {e}", is_print=True
+            )
+            return {"pnl_usdt": 0.0, "pnl_pct": 0.0}
+
+        pnl_usdt = 0.0
+        pnl_pct = 0.0
+
+        for row in rows:
+            try:
+                ts = int(row.get("uTime", 0))  # время обновления
+                if start_time and ts < start_time:
+                    continue
+
+                # фильтр по направлению
+                pos_side = row.get("posSide", "").upper()  # "LONG"/"SHORT"
+                if direction != pos_side:
+                    continue
+
+                # PnL в долларах
+                # pnl_usdt += float(row.get("realizedPnl", 0.0))
+                pnl_usdt += (
+                    float(row.get("realizedPnl", 0.0)) +
+                    float(row.get("fee", 0.0)) +
+                    float(row.get("fundingFee", 0.0))
+                )
+                # PnL в %
+                pnl_pct += (float(row.get("pnlRatio", 0.0))) * 100
+
+            except Exception:
+                continue
+
+        return {
+            "pnl_usdt": round(pnl_usdt, 4),
+            "pnl_pct": round(pnl_pct, 4),
+        }
+
+    async def get_futures_statement(
+        self,
+        symbol: Optional[str] = None,
+        session: Optional[aiohttp.ClientSession] = None,
+    ):
+        resp = await self.get_historical_orders_report(symbol=symbol, session=session)
+        if resp and resp.get("code") == "0":
+            return resp.get("data", [])
+        return []
+
 
 
 class ApiResponseValidator:

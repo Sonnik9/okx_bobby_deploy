@@ -5,6 +5,7 @@ TEG_ANCHOR: str = "#soft" # --------------------------  # имя тега цел
 TG_BOT_TOKEN: str = "8487324796:AAF9gTqIkshVxUVEniSKcCrUXWcrJ_2p1EA"
 TG_GROUP_ID: str = "-1002653345160" # id группы откуда парсить сигнал
 # TG_BOT_TOKEN: str = "8304645115:AAE5HKrTclLDoRmE5W60vLRurbEH_fm-qyU" # -- токен бота (test)
+# TG_BOT_TOKEN: str = "8112036801:AAHOVza_DoL7gFwJiITpXIdZRi8yOMtmihI" # -- токен бота2 (test)
 # TG_GROUP_ID: str = "-1003053085303" # -- id группы откуда парсить сигнал (test)
 
 # -- UTILS ---

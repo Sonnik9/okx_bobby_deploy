@@ -180,60 +180,43 @@ class Utils:
             return None
 
     async def pnl_report(
-            self,
-            symbol: str,
-            pos_side: str,
-            pos_data: dict,
-            get_current_price: Callable,
-            format_message=Callable,
-            chat_id=str
-        ):
-        label = f"{symbol}_{pos_side}"
-        cur_price = await get_current_price(symbol)
-        if cur_price is None:
-            print(f"[REPORT][ERROR][{label}]: cur_price is None")
-            return
+        self,
+        symbol: str,
+        pos_side: str,
+        pos_data: dict,
+        get_realized_pnl: Callable,
+        format_message: Callable,
+        chat_id: str
+    ):
+        """
+        Отчет по реализованному PnL через API, с поправкой на плечо.
+        Не использует текущую цену.
+        """
+        cur_time = int(time.time() * 1000)
+        start_time = pos_data.get("c_time")
 
-        # sign = 1 для LONG, -1 для SHORT
-        sign = {"LONG": 1, "SHORT": -1}.get(pos_side.upper())
-        if sign is None:
-            print(f"[REPORT][ERROR][{label}]:sign is None")
-            return  
-
-        entry_price = pos_data.get("entry_price")        
-        if not entry_price:
-            print(f"[REPORT][ERROR][{label}]:not entry_price or invest_usd")
-            return
-
-        # Корректируем цену с учётом проскальзывания
-        cur_price_with_slippage = apply_slippage(
-            price=cur_price,
-            slippage_pct=SLIPPAGE_PCT,
-            pos_side=pos_side
+        realized_pnl = await get_realized_pnl(
+            symbol=symbol,
+            direction=pos_side.upper(),
+            start_time=start_time,
+            end_time=cur_time
         )
 
-        # % PnL
-        pnl_pct = (cur_price_with_slippage - entry_price) / entry_price * 100 * sign
+        if realized_pnl is None:
+            return
 
-        # $ PnL
-        qty = pos_data.get("vol_assets")  # кол-во монет в позиции
-        pnl_usdt = qty * (cur_price_with_slippage - entry_price) * sign
-        # ///
+        pnl_usdt = realized_pnl.get("pnl_usdt", 0.0)
+        pnl_pct = realized_pnl.get("pnl_pct", 0.0)
 
-        time_in_deal = None
-        cur_time = int(time.time() * 1000)
-        if pos_data.get("c_time"):
-            time_in_deal = cur_time - pos_data.get("c_time")
-
-        leverage = pos_data.get("leverage", 1)
+        time_in_deal = cur_time - start_time if start_time else None
 
         body = {
             "symbol": symbol,
             "pos_side": pos_side,
-            "pnl_pct": pnl_pct * leverage,
             "pnl_usdt": pnl_usdt,
+            "pnl_pct": pnl_pct,
             "cur_time": cur_time,
-            "time_in_deal": format_duration(time_in_deal)
+            "time_in_deal": format_duration(time_in_deal),
         }
 
         format_message(

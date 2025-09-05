@@ -127,7 +127,7 @@ class MessageFormatter:
                             pnl_usdt_str = f"- {abs(pnl_usdt):.2f}"
                         else:
                             emo = f"{EMO_ZERO} 0 P&L"
-                            pnl_usdt_str = f"{pnl_usdt:.2f}"
+                            pnl_usdt_str = f"{pnl_usdt:.4f}"
                     else:
                         # Если pnl_usdt = None, только эмодзи
                         if pnl_pct > 0:

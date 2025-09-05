@@ -407,62 +407,65 @@ class Core:
         context_vars: dict,        
         symbol: str,
         pos_side: str,
-        last_timestamp: str
+        last_timestamp: str,
+        lock
     ) -> None:
-        # Проверка и установка дефолтов
-        if not self.pos_setup.set_pos_defaults(symbol, pos_side, self.instruments_data):
-            return
+        
+        async with lock:
+            # Проверка и установка дефолтов
+            if not self.pos_setup.set_pos_defaults(symbol, pos_side, self.instruments_data):
+                return
 
-        # Ждём первого апдейта позиций
-        while not self.sync._first_update_done:
-            await asyncio.sleep(0.1)
+            # Ждём первого апдейта позиций
+            while not self.sync._first_update_done:
+                await asyncio.sleep(0.1)
 
-        pos_data = context_vars.get(symbol, {}).get(pos_side, {})
+            pos_data = context_vars.get(symbol, {}).get(pos_side, {})
 
-        # Защита 1: уже в позиции (по данным биржи)
-        if pos_data.get("in_position"):
-            self.info_handler.debug_info_notes(
-                f"[handle_signal] Skip: already in_position {symbol} {pos_side}"
+            # Защита 1: уже в позиции (по данным биржи)
+            if pos_data.get("in_position"):
+                self.info_handler.debug_info_notes(
+                    f"[handle_signal] Skip: already in_position {symbol} {pos_side}"
+                )
+                return
+
+            # --- Достаём фин настройки ---
+            fin_settings = self.context.users_configs[chat_id]["config"]["fin_settings"]
+
+            # Обновляем плечо
+            max_leverage = context_vars.get(symbol, {}).get("spec", {}).get("max_leverage", 20)
+            leverage = min(
+                fin_settings.get("leverage") or parsed_msg.get("leverage"),
+                max_leverage
             )
-            return
+            pos_data["leverage"] = leverage
+            pos_data["margin_vol"] = fin_settings.get("margin_size")
 
-        # --- Достаём фин настройки ---
-        fin_settings = self.context.users_configs[chat_id]["config"]["fin_settings"]
+            # Форматируем цены
+            cur_price = self.context.prices.get(symbol)
+            for key in ("entry_price", "take_profit", "stop_loss"):
+                parsed_msg[key] = fix_price_scale(parsed_msg.get(key), cur_price)
 
-        # Обновляем плечо
-        max_leverage = context_vars.get(symbol, {}).get("spec", {}).get("max_leverage", 20)
-        leverage = min(
-            fin_settings.get("leverage") or parsed_msg.get("leverage"),
-            max_leverage
-        )
-        pos_data["leverage"] = leverage
-        pos_data["margin_vol"] = fin_settings.get("margin_size")
+            # Уведомление
+            signal_body = {
+                "symbol": symbol,
+                "pos_side": pos_side,
+                "cur_time": last_timestamp,
+                "leverage": leverage,
+                "entry_price": parsed_msg["entry_price"],
+                "tp": parsed_msg["take_profit"],
+                "sl": parsed_msg["stop_loss"],
+            }
+            self.notifier.format_message(chat_id, "signal", signal_body, is_print=True)
 
-        # Форматируем цены
-        cur_price = self.context.prices.get(symbol)
-        for key in ("entry_price", "take_profit", "stop_loss"):
-            parsed_msg[key] = fix_price_scale(parsed_msg.get(key), cur_price)
-
-        # Уведомление
-        signal_body = {
-            "symbol": symbol,
-            "pos_side": pos_side,
-            "cur_time": last_timestamp,
-            "leverage": leverage,
-            "entry_price": parsed_msg["entry_price"],
-            "tp": parsed_msg["take_profit"],
-            "sl": parsed_msg["stop_loss"],
-        }
-        self.notifier.format_message(chat_id, "signal", signal_body, is_print=True)
-
-        # Запуск ордера
-        await self.complete_signal_task(
-            chat_id=chat_id,
-            fin_settings=fin_settings,
-            parsed_msg=parsed_msg,
-            context_vars=context_vars,
-            last_timestamp=last_timestamp
-        )
+            # Запуск ордера
+            await self.complete_signal_task(
+                chat_id=chat_id,
+                fin_settings=fin_settings,
+                parsed_msg=parsed_msg,
+                context_vars=context_vars,
+                last_timestamp=last_timestamp
+            )
 
     async def _run_iteration(self) -> None:
         """Одна итерация торговли (от старта до стопа)."""
@@ -528,54 +531,55 @@ class Core:
                     await asyncio.sleep(MAIN_CYCLE_FREQUENCY)
                     continue
 
-                # --- Фильтруем сигналы по тексту и времени ---
-                filtered_signals: List[Tuple[str, int, str, dict]] = []  # msg, ts, chat_id, parsed_msg
-                current_time = time.time()
-                for msg, ts in signal_tasks_val:
-                    parsed_msg, all_present = self.tg_watcher.parse_tg_message(msg)
+                for signal_item in signal_tasks_val:
+                    if not signal_item:
+                        continue
+
+                    message, last_timestamp = signal_item
+                    if not (message and last_timestamp):
+                        print("[DEBUG] Invalid signal item, skipping")
+                        continue
+
+                    msg_key = f"{last_timestamp}_{hash(message)}"
+                    if msg_key in self.context.tg_timing_cache:
+                        continue
+                    self.context.tg_timing_cache.add(msg_key)
+
+                    parsed_msg, all_present = self.tg_watcher.parse_tg_message(message)
                     if not all_present:
                         print(f"[DEBUG] Parse error: {parsed_msg}")
                         continue
 
                     symbol = parsed_msg.get("symbol")
                     pos_side = parsed_msg.get("pos_side")
-                    # debug_label = f"{symbol}_{pos_side}"
 
                     if symbol in BLACK_SYMBOLS:
                         continue
-                    diff_sec = current_time - (ts / 1000)
 
+                    diff_sec = time.time() - (last_timestamp / 1000)
 
                     for num, (chat_id, user_cfg) in enumerate(self.context.users_configs.items(), start=1):
                         if num > 1:
                             continue
+                        if diff_sec < user_cfg.get("fin_settings", {}).get("order_timeout", 60):
 
-                        if diff_sec >= user_cfg.get("fin_settings", {}).get("order_timeout", 60):
-                            continue
+                            # если замок уже существует для msg_key, пропускаем
+                            if msg_key in self.context.signal_locks:
+                                continue
 
-                        # --- Генерируем ключ для повторной отправки ---
-                        signal_key = f"{symbol}_{pos_side}_{chat_id}"
-                        last_sent = self.context.tg_signal_hash_cache.get(signal_key, 0)
-                        if current_time - last_sent < SIGNAL_REPEAT_TIMEOUT:
-                            continue
+                            # создаём замок и оставляем его навсегда
+                            cur_lock = self.context.signal_locks[msg_key] = asyncio.Lock()
 
-                        self.context.tg_signal_hash_cache[signal_key] = current_time
-                        filtered_signals.append((ts, chat_id, parsed_msg))
-
-                # --- Обработка сигналов ---
-                for last_timestamp, chat_id, parsed_msg in filtered_signals:
-                    symbol = parsed_msg.get("symbol")
-                    pos_side = parsed_msg.get("pos_side")
-
-                    # --- Создаём асинхронную задачу с авто-очисткой pending_open ---
-                    asyncio.create_task(self.handle_signal(
-                        chat_id=chat_id,
-                        parsed_msg=parsed_msg,
-                        context_vars=context_vars,        
-                        symbol=parsed_msg.get("symbol"),
-                        pos_side=parsed_msg.get("pos_side"),
-                        last_timestamp=last_timestamp
-                    ))
+                            # --- запускаем задачу напрямую ---
+                            asyncio.create_task(self.handle_signal(
+                                chat_id=chat_id,
+                                parsed_msg=parsed_msg,
+                                context_vars=context_vars,
+                                symbol=symbol,
+                                pos_side=pos_side,
+                                last_timestamp=last_timestamp,
+                                lock=cur_lock
+                            ))
 
             except Exception as e:
                 err_msg = f"[ERROR] main loop: {e}\n" + traceback.format_exc()
@@ -592,6 +596,8 @@ class Core:
                     self.info_handler.debug_error_notes(err_msg, is_print=True)
 
                 await asyncio.sleep(MAIN_CYCLE_FREQUENCY)
+
+
 
     async def run_forever(self, debug: bool = True):
         """Основной перезапускаемый цикл Core."""

@@ -52,7 +52,7 @@ class PositionCleaner():
                     symbol=symbol,
                     pos_side=pos_side,
                     pos_data=pos_data,
-                    get_current_price=self.okx_client.get_current_price,
+                    get_realized_pnl=self.okx_client.get_realized_pnl,
                     format_message=self.format_message,
                     chat_id=self.chat_id
                 )   

@@ -7,7 +7,7 @@ class BotContext:
         """ Инициализируем глобальные структуры"""
         # //
         self.message_cache: list = []  # основной кеш сообщений
-        self.tg_signal_hash_cache: dict = {}
+        self.tg_timing_cache = set()
         self.stop_bot = False
         self.start_bot_iteration = False
         self.stop_bot_iteration = False
@@ -19,4 +19,4 @@ class BotContext:
         self.position_vars: dict = {}
         self.report_list: list = []
         self.session: Optional[aiohttp.ClientSession] = None
-        self.symbol_locks: dict = {}
+        self.signal_locks: dict = {}
