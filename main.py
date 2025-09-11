@@ -523,6 +523,9 @@ class Core:
         context_vars = self.context.position_vars
         asyncio.create_task(self.sync.refresh_positions_task())
 
+        instrume_update_interval = 300.0
+        last_instrume_time = time.monotonic()
+
         # --- Основной цикл итерации ---
         while not self.context.stop_bot_iteration and not self.context.stop_bot:
             try:
@@ -595,8 +598,21 @@ class Core:
                     err_msg = f"[ERROR] main finally block: {e}\n" + traceback.format_exc()
                     self.info_handler.debug_error_notes(err_msg, is_print=True)
 
-                await asyncio.sleep(MAIN_CYCLE_FREQUENCY)
+                now = time.monotonic()
 
+                # обновление кэша
+                if now - last_instrume_time >= instrume_update_interval:
+                    try:
+                        self.instruments_data = await self.okx_client.get_instruments(session=self.context.session)
+                        if not self.instruments_data:
+                            self.info_handler.debug_error_notes(f"[ERROR] Failed to fetch instruments: {e}", is_print=True)
+
+                    except Exception as e:
+                        self.info_handler.debug_error_notes(f"[ERROR] Failed to fetch instruments: {e}", is_print=True)
+
+                    last_instrume_time = now
+
+                await asyncio.sleep(MAIN_CYCLE_FREQUENCY)
 
 
     async def run_forever(self, debug: bool = True):

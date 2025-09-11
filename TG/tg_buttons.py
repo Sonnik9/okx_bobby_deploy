@@ -200,7 +200,7 @@ class TelegramUserInterface:
             if self.context.start_bot_iteration:
                 self.context.start_bot_iteration = False
                 self.context.stop_bot_iteration = True
-                self.context.users_configs = {}
+                # self.context.users_configs = {}
                 await message.answer("⛔ Торговля остановлена", reply_markup=self.main_menu)
             else:
                 await message.answer("Данная опция недоступна, поскольку торговля еще не начата.", reply_markup=self.main_menu)
