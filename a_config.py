@@ -2,9 +2,9 @@
 TEG_ANCHOR: str = "#soft" # --------------------------  # имя тега целевого сообщения
 
 # --- SECRETS CONFIG ---                 
-# TG_BOT_TOKEN: str = "8487324796:AAF9gTqIkshVxUVEniSKcCrUXWcrJ_2p1EA"
+TG_BOT_TOKEN: str = "8487324796:AAF9gTqIkshVxUVEniSKcCrUXWcrJ_2p1EA"
 TG_GROUP_ID: str = "-1002653345160" # id группы откуда парсить сигнал
-TG_BOT_TOKEN: str = "8304645115:AAE5HKrTclLDoRmE5W60vLRurbEH_fm-qyU" # -- токен бота (test) -- in Bobb
+# TG_BOT_TOKEN: str = "8304645115:AAE5HKrTclLDoRmE5W60vLRurbEH_fm-qyU" # -- токен бота (test) -- in Bobb
 # TG_BOT_TOKEN: str = "8112036801:AAHOVza_DoL7gFwJiITpXIdZRi8yOMtmihI" # -- токен бота2 (test)
 # TG_GROUP_ID: str = "-1003053085303" # -- id группы откуда парсить сигнал (test)
 
@@ -38,12 +38,12 @@ EMO_ORDER_FILLED: str = "🤞"
 INIT_USER_CONFIG = {
     "config": {
         "OKX": {
-            # "api_key": "1ad6a657-79f0-46ca-ac96-ab134919f175",
-            # "api_secret": "2242CBDD7836791C69CED4BD135CC873",
-            # "api_passphrase": "Dimonhochetpivo123?"
-            "api_key": "4e7f66f3-2fe5-4211-94b0-77b8980c0bb4",
-            "api_secret": "FD81F64CC6924294C886B37FD9FC4ED4",
-            "api_passphrase": "hereiame33!ABc"
+            "api_key": "1ad6a657-79f0-46ca-ac96-ab134919f175",
+            "api_secret": "2242CBDD7836791C69CED4BD135CC873",
+            "api_passphrase": "Dimonhochetpivo123?"
+            # "api_key": "4e7f66f3-2fe5-4211-94b0-77b8980c0bb4",
+            # "api_secret": "FD81F64CC6924294C886B37FD9FC4ED4",
+            # "api_passphrase": "hereiame33!ABc"
         },
         "fin_settings": {
             "margin_size": 9,
