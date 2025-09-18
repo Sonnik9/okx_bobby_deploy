@@ -4,6 +4,7 @@ import hmac
 import hashlib
 import base64
 import json
+import random
 from typing import Optional, Dict, Any, List
 from datetime import datetime, timezone
 from urllib.parse import urlencode
@@ -443,6 +444,7 @@ class OkxFuturesClient:
             params=params,
             private=True
         )
+    
     async def get_realized_pnl(
         self,
         symbol: str,
@@ -459,6 +461,7 @@ class OkxFuturesClient:
             rows = await self.get_futures_statement(symbol=symbol)
             # print(f"rows: {rows}")
             if not rows:
+                print(f"not get_realized_pnl")
                 return {"pnl_usdt": 0.0, "pnl_pct": 0.0}
         except Exception as e:
             self.info_handler.debug_error_notes(
@@ -482,11 +485,16 @@ class OkxFuturesClient:
 
                 # PnL в долларах
                 # pnl_usdt += float(row.get("realizedPnl", 0.0))
-                pnl_usdt += (
-                    float(row.get("realizedPnl", 0.0)) +
-                    float(row.get("fee", 0.0)) +
-                    float(row.get("fundingFee", 0.0))
-                )
+                # print("ROW:")
+                # print(row)
+                pnl_usdt += float(row.get("realizedPnl", 0.0))
+                if pnl_usdt == 0.0:
+                    pnl_usdt += float(row.get("fee", 0.0)) + float(row.get("fundingFee", 0.0))
+                # pnl_usdt += (
+                #     float(row.get("realizedPnl", 0.0)) +
+                #     float(row.get("fee", 0.0)) +
+                #     float(row.get("fundingFee", 0.0))
+                # )
                 # PnL в %
                 pnl_pct += (float(row.get("pnlRatio", 0.0))) * 100
 
@@ -502,11 +510,44 @@ class OkxFuturesClient:
         self,
         symbol: Optional[str] = None,
         session: Optional[aiohttp.ClientSession] = None,
-    ):
-        resp = await self.get_historical_orders_report(symbol=symbol, session=session)
-        if resp and resp.get("code") == "0":
-            return resp.get("data", [])
-        return []
+    ) -> List[Dict[str, Any]]:
+        """
+        Получение истории позиций (OKX) с retry до 7 попыток.
+        """
+        max_retries = 7
+        rows: List[Dict[str, Any]] = []
+
+        for attempt in range(1, max_retries + 1):
+            try:
+                resp = await self.get_historical_orders_report(symbol=symbol, session=session)
+                if resp and resp.get("code") == "0":
+                    rows = resp.get("data", [])
+                    break
+                else:
+                    self.info_handler.debug_error_notes(
+                        f"[get_futures_statement][OKX] invalid response code={resp.get('code') if resp else 'None'}, "
+                        f"attempt {attempt}/{max_retries}", is_print=True
+                    )
+            except Exception as e:
+                self.info_handler.debug_error_notes(
+                    f"[get_futures_statement][OKX] exception {e}, attempt {attempt}/{max_retries}",
+                    is_print=True
+                )
+
+            if attempt < max_retries:
+                await asyncio.sleep(random.uniform(1, 2))
+
+        return rows
+
+    # async def get_futures_statement(
+    #     self,
+    #     symbol: Optional[str] = None,
+    #     session: Optional[aiohttp.ClientSession] = None,
+    # ):
+    #     resp = await self.get_historical_orders_report(symbol=symbol, session=session)
+    #     if resp and resp.get("code") == "0":
+    #         return resp.get("data", [])
+    #     return []
 
 
 

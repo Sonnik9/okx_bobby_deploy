@@ -245,7 +245,7 @@ class Synchronizer(PositionCleaner):
             if not self.context.session or self.context.session.closed:
                 return
             
-            positions = (await self.okx_client.fetch_positions(session=self.context.session) or {})
+            positions = await self.okx_client.fetch_positions(session=self.context.session)
 
             if positions is None:
                 self.info_handler.debug_error_notes(
