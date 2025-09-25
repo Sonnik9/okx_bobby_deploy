@@ -549,6 +549,7 @@ class Core:
                     self.context.tg_timing_cache.add(msg_key)
 
                     parsed_msg, all_present = self.tg_watcher.parse_tg_message(message)
+                    # print(f"[DEBUG] Parse msg: {parsed_msg}")
                     if not all_present:
                         print(f"[DEBUG] Parse error: {parsed_msg}")
                         continue
